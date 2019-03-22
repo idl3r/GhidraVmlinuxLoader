@@ -107,7 +107,7 @@ public class GhidraVmlinuxLoader extends BinaryLoader {
 		Address baseAddress = importerLanguage.getAddressFactory().getDefaultAddressSpace().getAddress(0);
 		List<Program> results = new ArrayList<Program>();
 		boolean success = false;
-		
+
 		startAddress = importerLanguage.getAddressFactory().getDefaultAddressSpace().getAddress(startLong);
 
 		Program program = createProgram(provider, programName, baseAddress, getName(), importerLanguage,
@@ -129,13 +129,14 @@ public class GhidraVmlinuxLoader extends BinaryLoader {
 		GhidraDBTransaction trans = new GhidraDBTransaction(program, "Vmlinux Loader");
 		FunctionManager funcManager = program.getFunctionManager();
 		SymbolTable symTbl = program.getSymbolTable();
-		
+
 		for (int i = 0; i < symJson.address.length; i++) {
 			long symAddressLong = Long.parseUnsignedLong(symJson.address[i].toString(10));
-			Address symAddress = importerLanguage.getAddressFactory().getDefaultAddressSpace().getAddress(symAddressLong);
+			Address symAddress = importerLanguage.getAddressFactory().getDefaultAddressSpace()
+					.getAddress(symAddressLong);
 			String type = symJson.type[i];
 			String name = symJson.name[i];
-			
+
 			if (type.equals("T") || type.equals("t")) {
 				AddressSet symAddrSet = new AddressSet(symAddress);
 				try {
@@ -143,18 +144,17 @@ public class GhidraVmlinuxLoader extends BinaryLoader {
 				} catch (InvalidInputException e) {
 				} catch (OverlappingFunctionException e) {
 				}
-			}
-			else {
+			} else {
 				try {
 					symTbl.createLabel(symAddress, name, SourceType.IMPORTED);
 				} catch (InvalidInputException e) {
 				}
 			}
 		}
-		
+
 		trans.commit();
 		trans.close();
-		
+
 		results.add(program);
 
 		return results;
@@ -172,21 +172,70 @@ public class GhidraVmlinuxLoader extends BinaryLoader {
 		MemoryBlockUtil mbu = new MemoryBlockUtil(prog, handler);
 
 		boolean success = false;
-		try (InputStream fis = provider.getInputStream(fileOffset)) {
-			blockName = generateBlockName(prog, isOverlay, baseAddr.getAddressSpace());
-			mbu.createInitializedBlock(blockName, baseAddr, fis, length,
-					"fileOffset=" + fileOffset + ", length=" + length, provider.getAbsolutePath(), true, true, true,
-					monitor);
-			success = true;
-			String msg = mbu.getMessages();
-			if (msg.length() > 0) {
-				log.appendMsg(msg);
+
+		// Briefly divide the memory block into two parts
+		// .text: Code and some rodata
+		// .data: RW data
+		// This depends on symbol '_sinittext'
+		int idxStartInitText = 0;
+
+		for (int i = 0; i < symJson.address.length; i++) {
+			if (symJson.name[i].equals("_sinittext")) {
+				idxStartInitText = i;
+				break;
 			}
-		} catch (AddressOverflowException e) {
-			throw new IllegalArgumentException("Invalid address range specified: start:" + baseAddr + ", length:"
-					+ length + " - end address exceeds address space boundary!");
-		} finally {
-			mbu.dispose();
+		}
+
+		if (idxStartInitText == 0) {
+			try (InputStream fis = provider.getInputStream(fileOffset)) {
+				blockName = generateBlockName(prog, isOverlay, baseAddr.getAddressSpace());
+				mbu.createInitializedBlock(blockName, baseAddr, fis, length,
+						"fileOffset=" + fileOffset + ", length=" + length, provider.getAbsolutePath(), true, true, true,
+						monitor);
+				success = true;
+				String msg = mbu.getMessages();
+				if (msg.length() > 0) {
+					log.appendMsg(msg);
+				}
+			} catch (AddressOverflowException e) {
+				throw new IllegalArgumentException("Invalid address range specified: start:" + baseAddr + ", length:"
+						+ length + " - end address exceeds address space boundary!");
+			} finally {
+				mbu.dispose();
+			}
+		} else {
+			try {
+				InputStream fis;
+
+				long sInitTextLong = Long.parseUnsignedLong(symJson.address[idxStartInitText].toString(10));
+
+				fileOffset = 0;
+				length = sInitTextLong - startLong;
+				fis = provider.getInputStream(0);
+				blockName = ".text";
+				mbu.createInitializedBlock(blockName, baseAddr, fis, length,
+						"fileOffset=" + fileOffset + ", length=" + length, provider.getAbsolutePath(), true, false,
+						true, monitor);
+
+				fileOffset = length;
+				length = provider.length() - fileOffset;
+				fis = provider.getInputStream(fileOffset);
+				blockName = ".data";
+				mbu.createInitializedBlock(blockName, baseAddr.add(fileOffset), fis, length,
+						"fileOffset=" + fileOffset + ", length=" + length, provider.getAbsolutePath(), true, true, true,
+						monitor);
+
+				success = true;
+				String msg = mbu.getMessages();
+				if (msg.length() > 0) {
+					log.appendMsg(msg);
+				}
+			} catch (AddressOverflowException e) {
+				throw new IllegalArgumentException("Invalid address range specified: start:" + baseAddr + ", length:"
+						+ length + " - end address exceeds address space boundary!");
+			} finally {
+				mbu.dispose();
+			}
 		}
 		return success;
 	}
