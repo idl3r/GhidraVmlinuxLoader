@@ -82,9 +82,9 @@ public class GhidraVmlinuxLoader extends BinaryLoader {
 		}
 
 		LanguageCompilerSpecPair langSpecPair;
-		if (symJson.arch == 32) {
+		if (symJson.arch.equals("arm")) {
 			langSpecPair = new LanguageCompilerSpecPair("ARM:LE:32:v7", compiler);
-		} else if (symJson.arch == 64) {
+		} else if (symJson.arch.equals("arm64")) {
 			langSpecPair = new LanguageCompilerSpecPair("AARCH64:LE:64:v8A", compiler);
 		} else {
 			return loadSpecs;

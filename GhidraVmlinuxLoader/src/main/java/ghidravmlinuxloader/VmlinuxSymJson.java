@@ -9,7 +9,8 @@ import java.nio.file.Path;
 import com.google.gson.Gson;
 
 public class VmlinuxSymJson {
-	public int arch;
+	public String arch;
+	public int ptr_size;
 	public BigInteger _start;
 	public int numsyms;
 	public BigInteger[] address;
