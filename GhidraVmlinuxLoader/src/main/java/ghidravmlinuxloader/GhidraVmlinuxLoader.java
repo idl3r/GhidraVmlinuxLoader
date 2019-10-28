@@ -23,10 +23,9 @@ import java.nio.file.Paths;
 import java.util.*;
 
 import ghidra.app.plugin.assembler.sleigh.util.GhidraDBTransaction;
-import ghidra.app.util.MemoryBlockUtil;
+import ghidra.app.util.MemoryBlockUtils;
 import ghidra.app.util.Option;
 import ghidra.app.util.bin.ByteProvider;
-import ghidra.app.util.importer.MemoryConflictHandler;
 import ghidra.app.util.importer.MessageLog;
 import ghidra.app.util.opinion.BinaryLoader;
 import ghidra.app.util.opinion.LoadSpec;
@@ -114,8 +113,7 @@ public class GhidraVmlinuxLoader extends BinaryLoader {
 				importerCompilerSpec, consumer);
 
 		try {
-			success = this.loadInto(provider, loadSpec, options, log, program, monitor,
-					MemoryConflictHandler.ALWAYS_OVERWRITE);
+			success = this.loadInto(provider, loadSpec, options, log, program, monitor);
 			if (success) {
 				createDefaultMemoryBlocks(program, importerLanguage, log);
 			}
@@ -162,14 +160,14 @@ public class GhidraVmlinuxLoader extends BinaryLoader {
 
 	@Override
 	protected boolean loadProgramInto(ByteProvider provider, LoadSpec loadSpec, List<Option> options, MessageLog log,
-			Program prog, TaskMonitor monitor, MemoryConflictHandler handler) throws IOException {
+			Program prog, TaskMonitor monitor) throws IOException {
 		long length = provider.length();
 		long fileOffset = 0;
 		Address baseAddr = startAddress;
 		String blockName = null;
 		boolean isOverlay = false;
 
-		MemoryBlockUtil mbu = new MemoryBlockUtil(prog, handler);
+		MemoryBlockUtils mbu = new MemoryBlockUtils();
 
 		boolean success = false;
 
@@ -189,19 +187,13 @@ public class GhidraVmlinuxLoader extends BinaryLoader {
 		if (idxStartInitText == 0) {
 			try (InputStream fis = provider.getInputStream(fileOffset)) {
 				blockName = generateBlockName(prog, isOverlay, baseAddr.getAddressSpace());
-				mbu.createInitializedBlock(blockName, baseAddr, fis, length,
+				mbu.createInitializedBlock(prog, isOverlay, blockName, baseAddr, fis, length,
 						"fileOffset=" + fileOffset + ", length=" + length, provider.getAbsolutePath(), true, true, true,
-						monitor);
+						log, monitor);
 				success = true;
-				String msg = mbu.getMessages();
-				if (msg.length() > 0) {
-					log.appendMsg(msg);
-				}
 			} catch (AddressOverflowException e) {
 				throw new IllegalArgumentException("Invalid address range specified: start:" + baseAddr + ", length:"
 						+ length + " - end address exceeds address space boundary!");
-			} finally {
-				mbu.dispose();
 			}
 		} else {
 			try {
@@ -213,28 +205,22 @@ public class GhidraVmlinuxLoader extends BinaryLoader {
 				length = sInitTextLong - startLong;
 				fis = provider.getInputStream(0);
 				blockName = ".text";
-				mbu.createInitializedBlock(blockName, baseAddr, fis, length,
+				mbu.createInitializedBlock(prog, isOverlay, blockName, baseAddr, fis, length,
 						"fileOffset=" + fileOffset + ", length=" + length, provider.getAbsolutePath(), true, false,
-						true, monitor);
+						true, log, monitor);
 
 				fileOffset = length;
 				length = provider.length() - fileOffset;
 				fis = provider.getInputStream(fileOffset);
 				blockName = ".data";
-				mbu.createInitializedBlock(blockName, baseAddr.add(fileOffset), fis, length,
+				mbu.createInitializedBlock(prog, isOverlay, blockName, baseAddr.add(fileOffset), fis, length,
 						"fileOffset=" + fileOffset + ", length=" + length, provider.getAbsolutePath(), true, true, true,
-						monitor);
+						log, monitor);
 
 				success = true;
-				String msg = mbu.getMessages();
-				if (msg.length() > 0) {
-					log.appendMsg(msg);
-				}
 			} catch (AddressOverflowException e) {
 				throw new IllegalArgumentException("Invalid address range specified: start:" + baseAddr + ", length:"
 						+ length + " - end address exceeds address space boundary!");
-			} finally {
-				mbu.dispose();
 			}
 		}
 		return success;
@@ -249,7 +235,7 @@ public class GhidraVmlinuxLoader extends BinaryLoader {
 	}
 
 	@Override
-	public String validateOptions(ByteProvider provider, LoadSpec loadSpec, List<Option> options) {
-		return super.validateOptions(provider, loadSpec, options);
+	public String validateOptions(ByteProvider provider, LoadSpec loadSpec, List<Option> options, Program program) {
+		return super.validateOptions(provider, loadSpec, options, program);
 	}
 }
