@@ -39,3 +39,7 @@ gradle-app.setting
 /bin/
 /dist/
 /build/
+
+.antProperties.xml
+.project
+.settings
