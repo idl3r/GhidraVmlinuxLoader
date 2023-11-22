@@ -2,7 +2,7 @@
 
 This extension can be used to load vmlinux kernel images into Ghidra. Output from droidimg is required.
 
-It is a fork to be compatible with ghidra 10
+This version is compatible with Ghidra 10.3+.
 
 ## Usage
 
