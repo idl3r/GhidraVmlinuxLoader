@@ -22,6 +22,7 @@ import java.io.IOException;
 import java.util.*;
 
 import ghidra.app.util.Option;
+import ghidra.app.util.opinion.LoadException;
 import ghidra.app.util.bin.ByteProvider;
 import ghidra.app.util.importer.MessageLog;
 import ghidra.app.util.opinion.BinaryLoader;
@@ -54,6 +55,13 @@ import ghidra.program.model.symbol.SymbolTable;
 import ghidra.util.exception.CancelledException;
 import ghidra.util.exception.InvalidInputException;
 
+import java.io.File;
+import ghidra.framework.model.Project;
+import ghidra.app.util.opinion.Loaded;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 /**
  * TODO: Provide class-level documentation that describes what this loader does.
  */
@@ -62,6 +70,8 @@ public class GhidraVmlinuxLoader extends BinaryLoader {
 	private VmlinuxSymJson symJson;
 	private Address startAddress;
 	private long startLong;
+
+	static final Logger log4jLogger = LogManager.getLogger(GhidraVmlinuxLoader.class);
 
 	@Override
 	public String getName() {
@@ -75,8 +85,11 @@ public class GhidraVmlinuxLoader extends BinaryLoader {
 
 		// Ghidra requires image base to be determined at this stage, so we need to look
 		// for the JSON file here
-		String symFilePathStr = provider.getAbsolutePath();
+		// String symFilePathStr = provider.getAbsolutePath();
+		File vmlinuxFile = provider.getFile();
+		String symFilePathStr = vmlinuxFile.getAbsolutePath();
 		symFilePathStr = symFilePathStr.concat(".sym.json");
+		log4jLogger.info("Symbol file path: " + symFilePathStr);
 		Path symFilePath = Paths.get(symFilePathStr);
 		if (Files.notExists(symFilePath)) {
 			return loadSpecs;
@@ -105,37 +118,50 @@ public class GhidraVmlinuxLoader extends BinaryLoader {
 	}
 
 	@Override
-	protected List<Program> loadProgram(ByteProvider provider, String programName, DomainFolder programFolder,
-			LoadSpec loadSpec, List<Option> options, MessageLog log, Object consumer, TaskMonitor monitor)
+	protected List<Loaded<Program>> loadProgram(ByteProvider provider, String programName,
+			Project project, String programFolderPath, LoadSpec loadSpec, List<Option> options,
+			MessageLog log, Object consumer, TaskMonitor monitor)
 			throws IOException, CancelledException {
+		log4jLogger.info("Entering loadProgram");
 
-			LanguageCompilerSpecPair pair = loadSpec.getLanguageCompilerSpec();
+		LanguageCompilerSpecPair pair = loadSpec.getLanguageCompilerSpec();
 		Language importerLanguage = getLanguageService().getLanguage(pair.languageID);
-		CompilerSpec importerCompilerSpec = importerLanguage.getCompilerSpecByID(pair.compilerSpecID);
-		Address baseAddress = importerLanguage.getAddressFactory().getDefaultAddressSpace().getAddress(0);
-		List<Program> results = new ArrayList<Program>();
-		boolean success = false;
+		CompilerSpec importerCompilerSpec =
+			importerLanguage.getCompilerSpecByID(pair.compilerSpecID);
+
+		Address baseAddr =
+			importerLanguage.getAddressFactory().getDefaultAddressSpace().getAddress(0);
+		Program prog = createProgram(provider, programName, baseAddr, getName(), importerLanguage,
+			importerCompilerSpec, consumer);
 
 		startAddress = importerLanguage.getAddressFactory().getDefaultAddressSpace().getAddress(startLong);
 
-		Program program = createProgram(provider, programName, baseAddress, getName(), importerLanguage,
-				importerCompilerSpec, consumer);
+		List<Loaded<Program>> loadedList = new ArrayList<Loaded<Program>>();
 
+		log4jLogger.info("Finished creating program");
+
+		boolean success = false;
 		try {
-			success = this.loadInto(provider, loadSpec, options, log, program, monitor);
-			if (success) {
-				createDefaultMemoryBlocks(program, importerLanguage, log);
-			}
-		} finally {
+			loadInto(provider, loadSpec, options, log, prog, monitor);
+			createDefaultMemoryBlocks(prog, importerLanguage, log);
+			success = true;
+			// return loadedList;
+		}
+		catch (Exception e) {
+			log4jLogger.warn("loadProgram failed with exception: ", e);
+		}
+		finally {
 			if (!success) {
-				program.release(consumer);
-				return results;
+				prog.release(consumer);
+				return loadedList;
 			}
 		}
 
+		FunctionManager funcManager = prog.getFunctionManager();
+		SymbolTable symTbl = prog.getSymbolTable();
 
-		FunctionManager funcManager = program.getFunctionManager();
-		SymbolTable symTbl = program.getSymbolTable();
+		int id = prog.startTransaction("Creating Functions");
+		boolean commit = true;
 
 		for (int i = 0; i < symJson.address.length; i++) {
 			long symAddressLong = Long.parseUnsignedLong(symJson.address[i].toString(10));
@@ -159,14 +185,15 @@ public class GhidraVmlinuxLoader extends BinaryLoader {
 			}
 		}
 
-		results.add(program);
+		prog.endTransaction(id, commit);
 
-		return results;
+		loadedList.add(new Loaded<>(prog, programName, programFolderPath));
+		return loadedList;
 	}
 
 	@Override
-	protected boolean loadProgramInto(ByteProvider provider, LoadSpec loadSpec, List<Option> options, MessageLog log,
-			Program prog, TaskMonitor monitor) throws IOException {
+	protected void loadProgramInto(ByteProvider provider, LoadSpec loadSpec, List<Option> options, MessageLog log,
+			Program prog, TaskMonitor monitor) throws LoadException, IOException {
 		long length = provider.length();
 		long fileOffset = 0;
 		Address baseAddr = startAddress;
@@ -228,16 +255,17 @@ public class GhidraVmlinuxLoader extends BinaryLoader {
 						log, monitor);
 
 				success = true;
-				//String msg = mbu.getMessages();
-				//if (msg.length() > 0) {
-				//	log.appendMsg(msg);
-				//}
 			} catch (AddressOverflowException e) {
 				throw new IllegalArgumentException("Invalid address range specified: start:" + baseAddr + ", length:"
 						+ length + " - end address exceeds address space boundary!");
 			} 
 		}
-		return success;
+		// return success;
+		if (!success) {
+			throw new LoadException("Load failed!");
+		}
+
+		return;
 	}
 
 	@Override
